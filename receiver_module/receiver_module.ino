@@ -1,9 +1,12 @@
   const int hydrophonePin = A0;     // Analog pin from hydrophone
-  const int bitDuration = 10;       // Bit duration in milliseconds
+  const int hydrophonePin2 = A1;     // Analog pin from hydrophone
+  const int bitDuration = 30;       // Bit duration in milliseconds
+  const int duration = (bit_duration/1000 * 16 + 1) * 2.       // total duration
   const int samplesPerBit = 3;      // Number of samples per bit
-  const int sampleInterval = 3000;  // Sample interval in microseconds (~333 Hz)
+  const int sampleInterval = 10;  // Sample interval in microseconds (100 Hz)
+  const int sampleRate = 2 * (3000 + 500)
 
-  const int BUFFER_SIZE = 256;
+  const int BUFFER_SIZE = int(duration * sampleRate);
   bool bitBuffer[BUFFER_SIZE];
   volatile int writeIndex = 0;
   volatile int readIndex = 0;
@@ -17,7 +20,7 @@
 
   // Helper: Read ADC and apply envelope detection
   int readEnvelope() {
-    int val = analogRead(hydrophonePin) - 512; // Center around 0
+    int val = abs(analogRead(hydrophonePin2) - analogRead(hydrophonePin)); // Center around 0
     return abs(val); // Simple envelope: absolute value
   }
 
