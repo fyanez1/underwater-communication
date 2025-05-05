@@ -1,15 +1,19 @@
+  #include <TimerOne.h>
+
   const int hydrophonePin = A0;     // Analog pin from hydrophone
   const int hydrophonePin2 = A1;     // Analog pin from hydrophone
   const int bitDuration = 30;       // Bit duration in milliseconds
-  const int duration = (bit_duration/1000 * 16 + 1) * 2.       // total duration
-  const int samplesPerBit = 3;      // Number of samples per bit
-  const int sampleInterval = 10;  // Sample interval in microseconds (100 Hz)
+  const int duration = (bitDuration/1000 * 16 + 1) * 2.       // total duration
   const int sampleRate = 2 * (3000 + 500)
 
   const int BUFFER_SIZE = int(duration * sampleRate);
-  bool bitBuffer[BUFFER_SIZE];
+  int sampleBuffer[BUFFER_SIZE]; // Buffer for samples
+  int chunkSize = int(sample_rate * bitDuration/1000)
+  const int BIT_BUFFER_SIZE = int(BUFFER_SIZE / chunkSize)
+  bool bitBuffer[BIT_BUFFER_SIZE];
   volatile int writeIndex = 0;
-  volatile int readIndex = 0;
+  volatile int bitWriteIndex = 0;
+  bool bufferFull = false;
 
   // Preamble
   const uint8_t preamble = 0xAA;    // 10101010
@@ -24,15 +28,14 @@
     return abs(val); // Simple envelope: absolute value
   }
 
-  // Read one bit by majority voting
-  bool readBit() {
-    int ones = 0;
-    for (int i = 0; i < samplesPerBit; i++) {
-      int env = readEnvelope();
-      if (env > envelopeThreshold) ones++;
-      delayMicroseconds(sampleInterval);
-    }
-    return (ones >= (samplesPerBit + 1) / 2); // Majority
+  void sampleISR() {
+    if (bufferFull) return;
+    sampleBuffer[writeIndex++] = readEnvelope();
+
+    if (writeIndex >= BUFFER_SIZE) {
+      bufferFull = true;
+      writeIndex = 0; 
+    } 
   }
 
   // Correlate last N bits with preamble
@@ -45,32 +48,13 @@
     return bitErrors <= 1; // Allow 1 bit error
   }
 
-  void fillBuffer() {
-    static unsigned long lastSampleTime = 0;
-    if (micros() - lastSampleTime >= (bitDuration * 1000)) {
-      lastSampleTime = micros();
-      bool bit = readBit();
-      bitBuffer[writeIndex] = bit;
-      writeIndex = (writeIndex + 1) % BUFFER_SIZE;
-    }
-  }
-
-  bool bufferAvailable() {
-    return readIndex != writeIndex;
-  }
-
-  bool getBufferedBit() {
-    if (!bufferAvailable()) return 0;  // or wait/spin
-    bool bit = bitBuffer[readIndex];
-    readIndex = (readIndex + 1) % BUFFER_SIZE;
-    return bit;
-  }
-
-  uint16_t readBitsFromBuffer(int numBits) {
-    uint16_t value = 0;
+  uint64_t readBitsFromBuffer(int numBits, int startIndex) {
+    uint64_t value = 0;
     for (int i = 0; i < numBits; i++) {
       value <<= 1;
-      if (getBufferedBit()) value |= 1;
+      if (bitBuffer[startIndex + i]) {
+        value |= 1;
+      }
     }
     return value;
   }
@@ -78,58 +62,84 @@
   void setup() {
     Serial.begin(115200);
     pinMode(hydrophonePin, INPUT);
+    Timer1.initialize(sampleRate);
+    Timer1.attachInterrupt();
     Serial.println("Underwater acoustic receiver started");
   }
 
-  void loop() {
-    fillBuffer();  // keep filling buffer
+  void processChunks() {
+    for (int i = 0; i + chunkSize <= BUFFER_SIZE; i += chunkSize) {
+      int chunk[chunkSize];
+  
+      // Copy chunk from sampleBuffer
+      for (int j = 0; j < chunkSize; j++) {
+        chunk[j] = sampleBuffer[i + j];
+      }
+  
+      // Sort the chunk
+      std::sort(chunk, chunk + chunkSize);
+  
+      // Compute median
+      int median;
+      if (chunkSize % 2 == 1) {
+        median = chunk[chunkSize / 2];
+      } else {
+        median = (chunk[chunkSize / 2 - 1] + chunk[chunkSize / 2]) / 2;
+      }
 
-    uint8_t window = 0;
-
-    // 1. Look for preamble via correlation
-    while (bufferAvailable()) {
-      bool nextBit = getBufferedBit();
-      window = (window << 1) | (nextBit ? 1 : 0);
-      if (correlatePreamble(window)) {
-        Serial.println("Preamble detected!");
-        break;
+      if (median > envelopeThreshold) {
+        bitBuffer[bitWriteIndex++] = true; // 1
+      } else {
+        bitBuffer[bitWriteIndex++] = false; // 0
       }
     }
+    bitWriteIndex = 0; // Reset bitWriteIndex after processing
+  }
 
-    if (!bufferAvailable()) return;  // not enough data yet
+  bool isOneBitAway(uint8_t a, uint8_t b) {
+    uint8_t diff = a ^ b;  // XOR gives 1s where bits differ
+    return diff && !(diff & (diff - 1));
+  }
+   
 
-    // 2. Read start delimiter
-    uint8_t startDelimiter = readBitsFromBuffer(8);
-    if (startDelimiter != 0xF0) {
-      Serial.println("Start delimiter mismatch. Resyncing...");
-      return; // Go back to listening
-    }
-
-    // 3. Read packet fields according to the sensor module protocol
-    uint16_t tempReading = readBitsFromBuffer(16);
-    uint16_t condReading = readBitsFromBuffer(16);
-    uint16_t receivedChecksum = readBitsFromBuffer(16);
-
-    // 4. Calculate and validate checksum
-    uint16_t calculatedChecksum = tempReading ^ condReading;
-    
-    if (calculatedChecksum == receivedChecksum) {
-      float temperature = tempReading / 100.0;
-      float conductivity = condReading / 100.0;
+  void loop() {
+    if (bufferFull) {
+      noInterrupts();  // prevent update during copy
       
-      Serial.println("Valid packet received!");
-      Serial.print("Temperature: ");
-      Serial.print(temperature);
-      Serial.println("°C");
-      Serial.print("Conductivity: ");
-      Serial.print(conductivity);
-      Serial.println(" ms/cm");
-    } else {
-      Serial.println("Checksum failed. Resyncing...");
-      Serial.print("Received: 0x");
-      Serial.print(receivedChecksum, HEX);
-      Serial.print(", Calculated: 0x");
-      Serial.println(calculatedChecksum, HEX);
-      return; // Go back to listening
+      processChunks();
+      for (int i = 0; i < BIT_BUFFER_SIZE - 63; i++) {
+        if (isOneBitAway(readBitsFromBuffer(8, i), preamble)) {
+          if (readBitsFromBuffer(8, i+8) == 0xF0) { // Check for start delimiter
+            Serial.println("Preamble detected!");
+            uint16_t tempReading = readBitsFromBuffer(16, i + 16);
+            uint16_t condReading = readBitsFromBuffer(16, i + 32);
+            uint16_t receivedChecksum = readBitsFromBuffer(16, i + 48);
+            
+            uint16_t calculatedChecksum = tempReading ^ condReading;
+            
+            if (calculatedChecksum == receivedChecksum) {
+              float temperature = tempReading / 100.0;
+              float conductivity = condReading / 100.0;
+              
+              Serial.println("Valid packet received!");
+              Serial.print("Temperature: ");
+              Serial.print(temperature);
+              Serial.println("°C");
+              Serial.print("Conductivity: ");
+              Serial.print(conductivity);
+              Serial.println(" ms/cm");
+            } else {
+              Serial.println("Checksum failed. Resyncing...");
+              Serial.print("Received: 0x");
+              Serial.print(receivedChecksum, HEX);
+              Serial.print(", Calculated: 0x");
+              Serial.println(calculatedChecksum, HEX);
+            }
+        }
+      }
+      bufferFull = false;
+      writeIndex = 0;
+      interrupts();  // resume interrupts
     }
   }
+}
