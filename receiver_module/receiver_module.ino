@@ -3,14 +3,15 @@
   const int hydrophonePin = A0;     // Analog pin from hydrophone
   const int hydrophonePin2 = A1;     // Analog pin from hydrophone
   const int bitDuration = 30;       // Bit duration in milliseconds
-  const int duration = (bitDuration/1000 * 16 + 1) * 2;       // total duration
-  const int sampleRate = 2 * (3000 + 500);
+  const int duration = ((bitDuration/1000 * 16 + 1) * 2);       // total duration
+  const int sampleRate = 2 * (500 + 100);
 
-  const int BUFFER_SIZE = int(duration * sampleRate);
-  int sampleBuffer[BUFFER_SIZE]; // Buffer for samples
-  int chunkSize = int(sample_rate * bitDuration/1000);
+  const int chunkSize = 66; // int(sampleRate * bitDuration/1000.0);
+  // const int BUFFER_SIZE = int(duration * sampleRate);
+  const int BUFFER_SIZE = 2000;   
+  uint8_t sampleBuffer[2000]; 
   const int BIT_BUFFER_SIZE = int(BUFFER_SIZE / chunkSize);
-  bool bitBuffer[BIT_BUFFER_SIZE];
+  bool bitBuffer[99];
   volatile int writeIndex = 0;
   volatile int bitWriteIndex = 0;
   bool bufferFull = false;
@@ -30,7 +31,8 @@
 
   void sampleISR() {
     if (bufferFull) return;
-    sampleBuffer[writeIndex++] = readEnvelope();
+    writeIndex += 1;
+    sampleBuffer[writeIndex] = readEnvelope();
 
     if (writeIndex >= BUFFER_SIZE) {
       bufferFull = true;
@@ -62,22 +64,41 @@
   void setup() {
     Serial.begin(115200);
     pinMode(hydrophonePin, INPUT);
+    pinMode(hydrophonePin2, INPUT);
     Timer1.initialize(sampleRate);
-    Timer1.attachInterrupt();
+    Timer1.attachInterrupt(sampleISR);
     Serial.println("Underwater acoustic receiver started");
   }
 
+  void insertionSort(int arr[], int n) {
+    for (int i = 1; i < n; i++) {
+      int key = arr[i];
+      int j = i - 1;
+      while (j >= 0 && arr[j] > key) {
+        arr[j + 1] = arr[j];
+        j--;
+      }
+      arr[j + 1] = key;
+    }
+  }
+
   void processChunks() {
+    Serial.println("process chunks");
+    // Serial.println(BUFFER_SIZE);
+    // Serial.println(chunkSize);
     for (int i = 0; i + chunkSize <= BUFFER_SIZE; i += chunkSize) {
+      Serial.println("inside first loop");
       int chunk[chunkSize];
   
       // Copy chunk from sampleBuffer
       for (int j = 0; j < chunkSize; j++) {
+        // Serial.println(sampleBuffer[i + j]);
         chunk[j] = sampleBuffer[i + j];
       }
   
       // Sort the chunk
-      std::sort(chunk, chunk + chunkSize);
+      // std::sort(chunk, chunk + chunkSize);
+      insertionSort(chunk, chunkSize);
   
       // Compute median
       int median;
@@ -88,8 +109,10 @@
       }
 
       if (median > envelopeThreshold) {
+        Serial.println("TRUE");
         bitBuffer[bitWriteIndex++] = true; // 1
       } else {
+        Serial.println("FALSE");
         bitBuffer[bitWriteIndex++] = false; // 0
       }
     }
@@ -103,6 +126,9 @@
    
 
   void loop() {
+    // for (int i = 0; i < BIT_BUFFER_SIZE; i++) {
+    //   Serial.println(bitBuffer[i]);
+    // }
     if (bufferFull) {
       noInterrupts();  // prevent update during copy
       
@@ -128,6 +154,8 @@
               Serial.print("Conductivity: ");
               Serial.print(conductivity);
               Serial.println(" ms/cm");
+            }
+          }
         }
       }
       bufferFull = false;
@@ -135,4 +163,3 @@
       interrupts();  // resume interrupts
     }
   }
-}
