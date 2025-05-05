@@ -3,13 +3,13 @@
   const int hydrophonePin = A0;     // Analog pin from hydrophone
   const int hydrophonePin2 = A1;     // Analog pin from hydrophone
   const int bitDuration = 30;       // Bit duration in milliseconds
-  const int duration = (bitDuration/1000 * 16 + 1) * 2.       // total duration
-  const int sampleRate = 2 * (3000 + 500)
+  const int duration = (bitDuration/1000 * 16 + 1) * 2;       // total duration
+  const int sampleRate = 2 * (3000 + 500);
 
   const int BUFFER_SIZE = int(duration * sampleRate);
   int sampleBuffer[BUFFER_SIZE]; // Buffer for samples
-  int chunkSize = int(sample_rate * bitDuration/1000)
-  const int BIT_BUFFER_SIZE = int(BUFFER_SIZE / chunkSize)
+  int chunkSize = int(sample_rate * bitDuration/1000);
+  const int BIT_BUFFER_SIZE = int(BUFFER_SIZE / chunkSize);
   bool bitBuffer[BIT_BUFFER_SIZE];
   volatile int writeIndex = 0;
   volatile int bitWriteIndex = 0;
@@ -128,13 +128,6 @@
               Serial.print("Conductivity: ");
               Serial.print(conductivity);
               Serial.println(" ms/cm");
-            } else {
-              Serial.println("Checksum failed. Resyncing...");
-              Serial.print("Received: 0x");
-              Serial.print(receivedChecksum, HEX);
-              Serial.print(", Calculated: 0x");
-              Serial.println(calculatedChecksum, HEX);
-            }
         }
       }
       bufferFull = false;
