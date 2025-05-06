@@ -1,7 +1,7 @@
 #include <TimerOne.h>
 
-const int hydrophonePin = A0;     // Analog pin from hydrophone
-const int hydrophonePin2 = A1;     // Analog pin from hydrophone
+const int hydrophonePin = A6;     // Analog pin from hydrophone
+const int hydrophonePin2 = A7;     // Analog pin from hydrophone
 const int bitDuration = 30;       // Bit duration in milliseconds
 const int duration = ((bitDuration/1000 * 16 + 1) * 2);       // total duration
 const int sampleRate = 2 * (500 + 100);
