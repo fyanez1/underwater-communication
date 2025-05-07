@@ -2,16 +2,16 @@
 
 const int hydrophonePin = A6;     // Analog pin from hydrophone
 const int hydrophonePin2 = A7;     // Analog pin from hydrophone
-const int bitDuration = 30;       // Bit duration in milliseconds
+const int bitDuration = 20;       // Bit duration in milliseconds
 const int duration = ((bitDuration/1000 * 64 + 1) * 2);       // total duration
 const int sampleRate = 4 * (500);
 int numWrong = 0;
 int numPacketsWrong = 0;
 int total = 0;
 
-const int chunkSize = 60; // int(sampleRate * bitDuration/1000.0);
-const int BIT_BUFFER_SIZE = 390; // duration * sampleRate / chunkSize
-bool bitBuffer[390];
+const int chunkSize = 40; // int(sampleRate * bitDuration/1000.0);
+const int BIT_BUFFER_SIZE = 228; // duration * sampleRate / chunkSize;
+bool bitBuffer[228];
 volatile int writeIndex = 0;
 bool bufferFull = false;
 
@@ -24,7 +24,7 @@ const uint8_t preamble = 0xAA;    // 10101010
 const int preambleLength = 8;     // 8 bits
 
 // Envelope detection parameters
-const int envelopeThreshold = 20; // Adjust experimentally
+const int envelopeThreshold = 1; // Adjust experimentally
 
 // Helper: Read ADC and apply envelope detection
 bool readEnvelope() {
@@ -40,8 +40,7 @@ void sampleISR() {
   }
   int val = analogRead(hydrophonePin2) - analogRead(hydrophonePin);
   if (val < 0) val = -val;
-
-  if (val != 0) {
+  if (val > envelopeThreshold) {
     ones++;
   } else {
     zeros++;
@@ -97,9 +96,9 @@ void setup() {
   Serial.begin(115200);
   pinMode(hydrophonePin, INPUT);
   pinMode(hydrophonePin2, INPUT);
+  Serial.println("Underwater acoustic receiver started");
   Timer1.initialize(500);
   Timer1.attachInterrupt(sampleISR);
-  Serial.println("Underwater acoustic receiver started");
 }
 
 bool isOneBitAway(uint8_t a, uint8_t b) {
@@ -109,58 +108,60 @@ bool isOneBitAway(uint8_t a, uint8_t b) {
  
 
 void loop() {
+  // Serial.println(analogRead(hydrophonePin2) - analogRead(hydrophonePin));
+  // delay(100);
   if (bufferFull) {
     noInterrupts();  // prevent update during copy
     Serial.println("buffer full");
-
-    // if (total > 5) {
-    //   Serial.println("number wrong:");
-    //   Serial.println(numWrong);
-    //   Serial.println(numPacketsWrong);
-    // }
-
-    for (int i = 0; i < BIT_BUFFER_SIZE - 63; i++) {
-      Serial.print(bitBuffer[i]);
+    Serial.println(total);
+    if (total > 99) {
+      Serial.println("number wrong:");
+      Serial.println(numWrong);
+      Serial.println(numPacketsWrong);
     }
+
+    // for (int i = 0; i < BIT_BUFFER_SIZE - 63; i++) {
+    //   Serial.print(bitBuffer[i]);
+    // }
     
     for (int i = 0; i < BIT_BUFFER_SIZE - 63; i++) {
-      // if (total > 5) {
-      //   break;
-      // }
+      if (total > 99) {
+        break;
+      }
       if (isOneBitAway(readBitsFromBuffer(8, i), preamble)) {
         if (readBitsFromBuffer(8, i+8) == 0xF0) { // Check for start delimiter
-          Serial.println("Preamble detected!");
+          // Serial.println("Preamble detected!");
           uint16_t tempReading = readBitsFromBuffer(16, i + 16);
           uint16_t condReading = readBitsFromBuffer(16, i + 32);
           uint16_t receivedChecksum = readBitsFromBuffer(16, i + 48);
           
           uint16_t calculatedChecksum = tempReading ^ condReading;
-          Serial.println("checksums");
-          Serial.println(receivedChecksum);
-          Serial.println(calculatedChecksum);
+          // Serial.println("checksums");
+          // Serial.println(receivedChecksum);
+          // Serial.println(calculatedChecksum);
           
-          if (calculatedChecksum == receivedChecksum) {
-            float temperature = tempReading / 100.0;
-            float conductivity = condReading / 100.0;
+          // if (calculatedChecksum == receivedChecksum) {
+          //   float temperature = tempReading / 100.0;
+          //   float conductivity = condReading / 100.0;
             
-            Serial.println("Valid packet received!");
-            Serial.print("Temperature: ");
-            Serial.print(temperature);
-            Serial.println("°C");
-            Serial.print("Conductivity: ");
-            Serial.print(conductivity);
-            Serial.println(" ms/cm");
-          }
-          // int sum = 0;
-          // sum += numBitErrors(readBitsFromBuffer(8, i + 8), 0xF0); // start delimiter reading
-          // sum += numBitErrors(tempReading, 0x834); // temp reading
-          // sum += numBitErrors(condReading, 0x190); // cond reading
-          // sum += numBitErrors(calculatedChecksum, 0x9A4); // checksum reading
-          // if (sum != 0) {
-          //   numPacketsWrong += 1;
+          //   Serial.println("Valid packet received!");
+          //   Serial.print("Temperature: ");
+          //   Serial.print(temperature);
+          //   Serial.println("°C");
+          //   Serial.print("Conductivity: ");
+          //   Serial.print(conductivity);
+          //   Serial.println(" ms/cm");
           // }
-          // numWrong += sum;
-          // total += 1;
+          int sum = 0;
+          sum += numBitErrors(readBitsFromBuffer(8, i + 8), 0xF0); // start delimiter reading
+          sum += numBitErrors(tempReading, 0x834); // temp reading
+          sum += numBitErrors(condReading, 0x190); // cond reading
+          sum += numBitErrors(calculatedChecksum, 0x9A4); // checksum reading
+          if (sum != 0) {
+            numPacketsWrong += 1;
+          }
+          numWrong += sum;
+          total += 1;
           // Serial.println(numWrong);
           // Serial.println("SUM");
           // Serial.println(sum);
